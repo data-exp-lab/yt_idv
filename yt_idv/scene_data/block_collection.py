@@ -22,6 +22,11 @@ class BlockCollection(SceneData):
     scale = traitlets.Bool(False)
     blocks_by_grid = traitlets.Instance(defaultdict, (list,))
     grids_by_block = traitlets.Dict(default_value=())
+    scale_matrix = traitlets.Instance(np.ndarray)
+
+    @traitlets.default("scale_matrix")
+    def _default_scale_matrix(self):
+        return np.eye(4)
 
     @traitlets.default("vertex_array")
     def _default_vertex_array(self):
@@ -48,18 +53,8 @@ class BlockCollection(SceneData):
         vert, dx, le, re = [], [], [], []
         self.min_val = +np.inf
         self.max_val = -np.inf
-        if self.scale:
-            left_min = np.ones(3, "f8") * np.inf
-            right_max = np.ones(3, "f8") * -np.inf
-            for block in self.data_source.tiles.traverse():
-                np.minimum(left_min, block.LeftEdge, left_min)
-                np.maximum(right_max, block.LeftEdge, right_max)
-            scale = right_max.max() - left_min.min()
-            for block in self.data_source.tiles.traverse():
-                block.LeftEdge -= left_min
-                block.LeftEdge /= scale
-                block.RightEdge -= left_min
-                block.RightEdge /= scale
+        left_min = np.ones(3, "f8") * np.inf
+        right_max = np.ones(3, "f8") * -np.inf
         for i, block in enumerate(self.data_source.tiles.traverse()):
             self.min_val = min(self.min_val, np.nanmin(np.abs(block.my_data[0]).min()))
             self.max_val = max(self.max_val, np.nanmax(np.abs(block.my_data[0]).max()))
@@ -70,6 +65,21 @@ class BlockCollection(SceneData):
             dx.append([dds.astype("f4") for _ in range(n)])
             le.append([block.LeftEdge.astype("f4") for _ in range(n)])
             re.append([block.RightEdge.astype("f4") for _ in range(n)])
+            # Compute the extent
+            left_extent = []
+            right_extent = []
+            if not block.source_mask.any():
+                continue
+            for ax in range(3):
+                mask = np.any(block.source_mask.any(axis=ax))
+                this_mi = np.where(mask)[0].min()
+                this_ma = np.where(mask)[0].max() + 1
+                left_extent.append(this_mi)
+                right_extent.append(this_ma)
+            left_extent = block.LeftEdge + dds * left_extent
+            right_extent = block.LeftEdge + dds * right_extent
+            np.minimum(left_min, left_extent, left_min)
+            np.maximum(right_max, right_extent, right_max)
         for (g, node, (sl, _dims, _gi)) in self.data_source.tiles.slice_traverse():
             block = node.data
             self.blocks_by_grid[g.id - g._id_offset].append((id(block), i))
@@ -88,6 +98,11 @@ class BlockCollection(SceneData):
         dx = np.concatenate(dx)
         le = np.concatenate(le)
         re = np.concatenate(re)
+        scale = np.ones(4)
+        scale[:3] = 1.0 / (right_max - left_min).max()
+        translate = np.eye(4)
+        translate[:3, 3] = -(right_max + left_min) / 2.0
+        self.scale_matrix = (np.eye(4) * scale) @ translate
 
         self.vertex_array.attributes.append(
             VertexAttribute(name="model_vertex", data=vert)

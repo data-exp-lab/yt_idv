@@ -218,3 +218,6 @@ class SceneComponent(traitlets.HasTraits):
 
     def draw(self, scene, program):
         raise NotImplementedError
+
+
+_cmaps = ["arbre", "viridis", "magma", "doom"]
